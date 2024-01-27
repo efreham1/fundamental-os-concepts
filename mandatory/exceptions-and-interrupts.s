@@ -38,16 +38,9 @@ todo_3:
 	# Get value of the memory mapped receiver control register.
   	
   	lw $s0, 0xffff0000	
-
-	# Todo: Set bit 1 (interrupt enable) in receiver control to 1.
 	
-	# TIP 1: Bits are numbered from 0 to 31 with 0 beeing the least significant bit.
+	ori $s1, $s0, 0x2
 	
-	# TIP 2: Use the bitmask 0x2 = [bin] = 0000 ..... 0010
-	
-	# TIP 3: Use the ori (bitwise or immediate) instruction and store result in $s1.
-	
-        
  	# Update the memory mapped receiver control register.
  	
         sw $s1, 0xffff0000
@@ -137,11 +130,10 @@ __exception:
 	# Branch on value of the the exception code in $k1. 
 	
 	beq $k1, 12, __overflow_exception
+		
+	beq $k1, 4, __bad_address_exception
 	
-todo_2:	
-	# TODO: Add code to branch to label __bad_address_exception for exception code 4. 	
-	
-	# TODO: Add code to branch to label __trap_exception for exception code 13. 
+	beq $k1, 13, __trap_exception
 	
 __unhandled_exception: 
     	
@@ -163,7 +155,7 @@ __overflow_exception:
  
  	j __resume_from_exception
  	
- __bad_address_exception:
+__bad_address_exception:
 
   	#  Use the MARS built-in system call 4 (print string) to print error messsage.
 	
@@ -216,14 +208,14 @@ __keyboard_interrupt:
 todo_4:
 	# Store content of the memory mapped receiver data register in $k1.
 	
-	# lw $k1, 0xffff0004 # TODO: Uncomment this instruction. 
+	lw $k1, 0xffff0004 # TODO: Uncomment this instruction. 
 
 	# Use the MARS built-in system call 11 (print char) to print the character
 	# from receiver data.
 	
-	# move $a0, $k1 # TODO: Uncomment this line. 
-	# li $v0, 11    # TODO: Uncomment this line. 
-	# syscall       # TODO: Uncomment this line.
+	move $a0, $k1 # TODO: Uncomment this line. 
+	li $v0, 11    # TODO: Uncomment this line. 
+	syscall       # TODO: Uncomment this line.
 	
 	j __resume
 	
@@ -244,7 +236,7 @@ todo_1:
         # Otherwise the same instruction would be executed again causing the same 
         # exception again.
         
-        # addi $k0, $k0, 4 # TODO: Uncomment this instruction      
+        addi $k0, $k0, 4 #Increment epc by 4 to resume execution at next instruction
        
         # Update EPC in coprocessor 0.
         
