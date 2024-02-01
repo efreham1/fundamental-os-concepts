@@ -111,22 +111,27 @@ boot:
 # Strings used by the jobs to print messages to the Run I/O pane. 
 
 JOB_GETC_HELLO:		.asciiz "Job started running getc\n"
-JOB_ÌNCREMENT_HELLO:	.asciiz "Job started running increment\n"
+JOB_GETS_HELLO:		.asciiz "Job started running gets\n"
+JOB_INCREMENT_HELLO:	.asciiz "Job started running increment\n"
 
 JOB_ID:			.asciiz "Job id = "
 NL:			.asciiz "\n"
 
 PRESS_KEY:		.asciiz "Press a key on the keyboard ...\n"
 PRESS_MMIO_KEY:		.asciiz "Type a character in the MMIO Simulator keyboard input area ..\n"
+PRESS_MMIO_STRING:	.asciiz "Type a string in the MMIO Simulator keyboard input area ..\n"
 
 # In these strings the X is at offset 17 and will be replaced before printing. 
 
 MARS_GETC_RESULT: 	.asciiz "\nMARS   getc ==> X\n"
 CUSTOM_GETC_RESULT: 	.asciiz "\nCustom getc ==> X\n"
+CUSTOM_GETS_RESULT:	.asciiz "String entered: "
 
 # Memory addresses to the memory mapped receiver registers. 
 RECEIVER_CONTROL:	.word 0xffff0000
 RECEIVER_DATA:		.word 0xffff0004
+
+CUSTOM_GETS_BUFFER:	.space 128
 	
 ###############################################################################
 # NON-TERMINATING USER LEVEL JOBS
@@ -149,7 +154,7 @@ job_increment:
 	# Use the MARS builtin system call (4) to print string.
 	
 	li $v0, 4
-	la $a0, JOB_ÌNCREMENT_HELLO
+	la $a0, JOB_INCREMENT_HELLO
 	syscall 
 
 	# Use the MARS builtin system call (4) to print string.
@@ -196,6 +201,8 @@ job_increment_infinite_loop:
 #------------------------------------------------------------------------------
 
 job_getc:
+
+	beq $zero, 0, job_gets
 	
 	# Use the MARS builtin system call (4) to print strings.
 	
@@ -276,6 +283,79 @@ job_getc_infinite_loop:
 	syscall 
 	
 	j job_getc_infinite_loop
+	
+	
+	
+job_gets:
+	
+	# Use the MARS builtin system call (4) to print strings.
+	
+	li $v0, 4               # System call code (4) print string. 
+	la $a0, JOB_GETS_HELLO  # String to print.
+	syscall 		# Execute the MARS built-in system call (4) to print string.
+	
+	# Use the MARS builtin system call (4) to print string.
+	
+	li $v0, 4
+	la $a0, JOB_ID
+	syscall
+	
+	# Use the custom system call (getjid, system call 0) to get the kernel id of this job. 
+	
+	li $v0, 0	# Custom system call code 0 (getjid).
+	teqi $zero, 0   # Generate a trap exception to handle the system call.
+	
+	# $a0 now containts the job id. 
+	
+	# Use the MARS builtin system call (1) to print the id (integer).
+
+	li $v0, 1
+	syscall
+
+	# Use the MARS builtin system call (4) to print string.
+	
+	li $v0, 4
+	la $a0, NL
+	syscall
+
+	
+	# Set $s0 to 0xabcd1234.
+	
+	li $s0, 0xabcd1234
+ 
+	# Enter infintite loop. 
+	
+job_gets_infinite_loop:
+	
+	# Use the MARS builtin system call (4) to print strings.
+	
+	li $v0, 4               # System call code (4) print string. 	
+	la $a0, PRESS_MMIO_STRING  # String to print.
+	syscall 		# Execute the Mars built-in system call (4) to print string.	
+
+	# Execute the custom getc system call (system call 12).
+	
+	la $a0, CUSTOM_GETS_BUFFER
+	li $a1, 128 #buffer size
+	li $v0, 8
+	teqi $zero, 0    
+	
+	# ASCII value of key pressed now in $v0
+	
+	# Use the MARS builtin system call (4) to print strings.
+	li $v0, 4
+	la $a0, CUSTOM_GETS_RESULT
+	syscall 
+	
+	li $v0, 4
+	la $a0, CUSTOM_GETS_BUFFER
+	syscall 
+	
+	li $v0, 4
+	la $a0, NL
+	syscall
+	
+	j job_gets_infinite_loop
 
 
 ###############################################################################
@@ -332,6 +412,11 @@ __kernel_initial_stack_top:	.space 4   # Allocate four more bytes.
 # Allocate space to temporarily save $at. 
 
 __at:	.word 0
+
+# Allocate space for address for next char and buffer size 
+
+__next_char_address: .word 0
+__buffer_size: .word 0
 
 # Initially, the kernel $sp will be set to address of __kernel_stack_top and
 # grow downward towards __kernel_stack_bottom. 
@@ -419,9 +504,10 @@ __save_running_job_context:
  	# Save register values. 
  	 
 	sw $k0,   0($k1)	# PC
-	sw $v0    4($k1)	# $v0
-	
-TODO_1: # Save $a0, $a1, $s0 to the context. 
+	sw $v0,   4($k1)	# $v0
+	sw $a0,   8($k1)
+	sw $a1,   12($k1)
+	sw $s0,   16($k1)
         	
 	
 	lw $a0, __at            # NOTE: $at was saved to memory when entering the kernel!
@@ -457,8 +543,10 @@ __restore_job_context:
 
 	lw $k1,  0($k0) # PC
 	lw $v0,  4($k0) # $v0
+	lw $a0,  8($k0)
+	lw $a1,  12($k0)
+	lw $s0,  16($k0)
 	
-TODO_2: # Restore $a0, $a1, $s0 from the context.
 	
 	
 	# NOTE: $at may still be used by the kernel and will be restored later, right before 
@@ -494,7 +582,7 @@ __kernel:
 	# $at to $k0. 
 		
 	# .set noat       	# SPIM - Turn of warnings for using the $at register.
-        move $k1, $at		# Copy value of $at to $k0.     
+        move $k1, $at		# Copy value of $at to $k1.     
        	# .set at               # SPIM - Turn on warnings for using the $at register.
 
 	# Now the value of $at can be saved to memory. 
@@ -529,7 +617,7 @@ __kernel:
 
    	beqz $k1, __interrupt
 	
-	# A non-zero exception means its an exception. 
+	# A non-zero exception code means its an exception. 
 	
 __exception:
 	
@@ -556,6 +644,9 @@ __trap_handler:
    	beqz $v0, __system_call_getjid
    	
 TODO_3: # Jump to label __system_call_getc for system call code 12.
+
+	beq $v0, 8, __system_call_gets
+	beq $v0, 12, __system_call_getc
 	
    	
    	j __unsported_system_call
@@ -568,13 +659,26 @@ TODO_3: # Jump to label __system_call_getc for system call code 12.
 
 
 	jal __restore_job_context
+	
+	lw $at, 20($k0)	
 
 TODO_4: # Put the jid of the caller in register $a0.
 	
-	# TIP: The kernel saved the jid of the running job in memory at label __running
-        	
+	# TIP: The kernel saved the jid of the running job in memory at label __running'
 	
+	lw $a0, __running
+        
 	j __return_from_exception
+	
+	
+	
+__system_call_gets:
+
+	lw $a0, 8($k1)
+	lw $a1, 12($k1)
+
+	sw $a0, __next_char_address
+	sw $a1, __buffer_size
    	  	
 __system_call_getc:
 
@@ -601,6 +705,7 @@ TODO_5:	# Get address of the instruction (teqi) causing the exception.
 	# TIP: Use the mfc0 (Move FRom Coprocessor 0) instruction to get the value of
 	# EPC.
 	
+	mfc0 $t0, $14
 	
 	# If resuming the caller at of the EPC this will cause the very same
 	# instruction to be executed again, i.e., executing the teqi used to initiate
@@ -613,6 +718,7 @@ TODO_6:	# To resume at the instruction following the teqi instruction,
 	
 	# TIP: Use the addi (Add Immediate) instruction. 
 	
+	addi $t1, $t0, 4
 	
 TODO_7:	# The value of EPC + 4 must now be saved in the context of the caller. 
 
@@ -626,6 +732,7 @@ TODO_7:	# The value of EPC + 4 must now be saved in the context of the caller.
 	# TIP: Use the sw (Store Word) instruction to save the content of EPC + 4 ($t1) 
 	# Save EPC + 4 in user context at offset 0 (program counter). 
 	
+	sw $t1, 0($k1)
 		
 	# Job id of job to resume while the calling job waits. 
 	
@@ -667,8 +774,7 @@ TODO_7:	# The value of EPC + 4 must now be saved in the context of the caller.
 	# Resume execution at address stored in EPC. 
 	
 	eret
-	
-   	
+		
 __unsported_system_call:
 
 	li $v0, 4
@@ -749,10 +855,87 @@ __kbd_interrupt:
 	li $k1, -1
 	beq $k0, $k1, __return_from_interrupt 
 	
+	#  Check if there is an address and therefore that a string is being read.
+	
+	lw $k0, __next_char_address
+	
+	beqz $k0, __getc_system_call_pending
+	
+__gets_system_call_pending:
+	
+	# A job is waiting for a string input
+	
+	# Get ASCII value of key pressed and save in $k1.
+	
+	# The memory mapped transiver data register is at address 0xffff0004.
+	
+	li $k1, 0xffff0004
+	lw $k1, 0($k1)
+	
+	beq $k1, 10, __end_string
+	
+	sb $k1, 0($k0)
+	
+	addi $k0, $k0, 1
+	
+	sw $k0, __next_char_address
+	
+	lw $k0, __buffer_size
+	
+	addi $k0, $k0, -1
+	
+	sw $k0, __buffer_size
+	
+	beq $k0, 1, __end_string
+	
+__continue_string:
+	
+	jal __get_running_job #place ID in $k0 so __restore_job_context works
+
+	jal __restore_job_context
+	
+	lw $at, 20($k0) 
+	
+	j __return_from_interrupt
+	
+__end_string:
+
+	lw $k0, __next_char_address
+	
+	sb $zero, 0($k0)
+	
+__switch_job:
+	
+	sw $zero, __next_char_address
+	
+	# A job is waiting for a string input
+	
+	# Svap waiting task and running task
+	
+	lw $k0, __waiting
+	lw $k1, __running
+	sw $k0, __running
+	sw $k1, __ready
+	
+	# No job is waiting anymore. 
+	
+	li $t0, -1
+	sw $t0, __waiting
+	
+	# $k0 holds id of job waiting for input, restore the context of this job. 
+	
+	jal __restore_job_context
+	
+	lw $at, 20($k0) 
+
+	# NOTE: From this point no pseudo instructions can be used. 
+	
+	j __return_from_interrupt
+	
 	
 __getc_system_call_pending:
 	
-	# A job is waiting for input.
+	# A job is waiting for a char input
 	
 	# Svap waiting task and running task
 	
@@ -784,6 +967,7 @@ TODO_8:	# Before resuming the waiting job, put the ASCII value of the pressed
 	# TIP: Use the (Load Word) instruction to read the ASCII value stored in 
 	# receiver data into $v0. 
 	
+	lw $v0, 0($k1)
 	
 	# Restore $at.
 	
@@ -791,10 +975,14 @@ TODO_8:	# Before resuming the waiting job, put the ASCII value of the pressed
 
 	# NOTE: From this point no pseudo instructions can be used. 
 	
+	j __return_from_interrupt
+
+__return_from_interrupt:
+
 	# Done handling the interupt, enable all interrupts.
 	
 	# Get content of the STATUS register.  
-	
+
 	mfc0 $k0, $12
 	
 	# Set bit 0 (interrupt enable) to 1.
@@ -805,13 +993,6 @@ TODO_8:	# Before resuming the waiting job, put the ASCII value of the pressed
 	# Update the STATUS register. 
 	
 	mtc0 $k0, $12 
-	
-	# Resume execution of the waiting job. The eret instruction sets $pc to the
-	# value of EPC.
-	
-	eret
-
-__return_from_interrupt:
 
    	# Error return; set PC to value in $14 (EPC).
    
